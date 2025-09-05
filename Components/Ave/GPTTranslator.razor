@@ -1,0 +1,83 @@
+﻿@using AveTranslator.Client.Models
+@using System.Text.Json
+@using System.Text
+@using System.Net.Http.Headers
+@using AveTranslatorM.Models
+@using System.Diagnostics
+
+@inject HttpClient Http
+@inject WorkingService WorkingService
+@inject IJSRuntime JS
+<button class="btn btn-sm btn-secondary mt-1"
+@onclick="TranslateAsync">
+    Translate
+</button>
+
+@code {
+    [Parameter]
+    public TranslationEntry Entry { get; set; } = default!;
+
+    [Parameter]
+    public EventCallback<TranslationEntry> OnTranslated { get; set; }
+
+    public GptSettings gptSettings => WorkingService.WorkingFile.GptSettings;
+    public async Task TranslateAsync()
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(Entry?.Value))
+            {
+                Entry.Translated = "";
+                return;
+            }
+
+
+            var request = new HttpRequestMessage(HttpMethod.Post, "https://api.openai.com/v1/chat/completions");
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", gptSettings.ApiKey);
+
+            var payload = new
+            {
+                model = gptSettings.Model,
+                messages = new[]
+                {
+                    new { role = "system", content = WorkingService.CurrentGameSettings.GptQuery},
+                    new { role = "user", content = Entry.Value }
+                },
+                max_tokens = gptSettings.MaxTokens
+            };
+
+            request.Content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
+
+            var response = await Http.SendAsync(request);
+            if (response.IsSuccessStatusCode)
+            {
+                var json = await response.Content.ReadAsStringAsync();
+
+                using var doc = JsonDocument.Parse(json);
+                var translation = doc.RootElement
+                    .GetProperty("choices")[0]
+                    .GetProperty("message")
+                    .GetProperty("content")
+                    .GetString();
+
+                translation ??= translation?.Trim();
+                Entry.Translated = translation;
+
+                await JS.InvokeVoidAsync("clipboardInterop.insertTranslation", translation);
+
+                if (OnTranslated.HasDelegate)
+                    await OnTranslated.InvokeAsync(Entry);
+            }
+            else
+            {
+                var errorResponse = await response.Content.ReadAsStringAsync();
+                Debug.WriteLine("Error Response: " + response.StatusCode + " " + errorResponse);
+
+            }
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine(ex, "Cannot translate");
+        }
+    }
+}

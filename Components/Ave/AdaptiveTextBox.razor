@@ -1,0 +1,78 @@
+﻿@* Components/Ave/AdaptiveTextBox.razor *@
+@implements IDisposable
+@inject IJSRuntime JS
+
+<div class="adaptive-container">
+    <textarea class="@CssClass"
+              @bind="CurrentValue"
+              @bind:event="oninput"
+              @onchange="HandleChange"
+              @ref="textArea"
+              placeholder="@Placeholder"
+              @attributes="AdditionalAttributes">
+    </textarea>
+</div>
+
+@code {
+    [Parameter]
+    public string? Value { get; set; }
+
+    [Parameter]
+    public EventCallback<string?> ValueInputed { get; set; }
+
+    [Parameter]
+    public EventCallback<string?> ValueChanged { get; set; }
+
+    [Parameter]
+    public string Placeholder { get; set; } = "";
+
+    [Parameter]
+    public bool IsEmpty { get; set; }
+
+    [Parameter(CaptureUnmatchedValues = true)]
+    public Dictionary<string, object>? AdditionalAttributes { get; set; }
+
+    private ElementReference textArea;
+    private string CssClass => $"adaptive-textarea {(IsEmpty ? "empty" : "")}";
+    private bool shouldUpdate = false;
+    private string? CurrentValue
+    {
+        get => Value;
+        set
+        {
+            if (Value == value) return;
+            Value = value;
+            if (ValueInputed.HasDelegate)
+                _ = ValueInputed.InvokeAsync(value);
+        }
+    }
+
+    private async Task HandleChange(ChangeEventArgs args)
+    {
+        if (ValueChanged.HasDelegate)
+        {
+            var newValue = args.Value?.ToString();
+           
+            await ValueChanged.InvokeAsync(newValue);
+        }
+    }
+
+    protected override void OnParametersSet()
+    {
+        shouldUpdate = true;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender || shouldUpdate)
+        {
+            shouldUpdate = false;
+            await JS.InvokeVoidAsync("adaptiveTextBox.initialize", textArea);
+        }
+    }
+
+    public void Dispose()
+    {
+        // Cleanup if needed
+    }
+}

@@ -1,0 +1,77 @@
+﻿@inject GameSelectionService GameService
+
+<div class="top-row ps-3 navbar navbar-dark">
+    <div class="container-fluid">
+        <a class="navbar-brand" href="">AveTranslatorM</a>
+    </div>
+</div>
+
+<input type="checkbox" title="Navigation menu" class="navbar-toggler" />
+
+<div class="nav-scrollable" onclick="document.querySelector('.navbar-toggler').click()">
+    <nav class="flex-column">
+        <div class="nav-item px-3">
+            <NavLink class="nav-link" href="" Match="NavLinkMatch.All">
+                <span class="bi bi-house-door-fill-nav-menu" aria-hidden="true"></span> Home
+            </NavLink>
+        </div>
+        <div class="nav-item px-3">
+            <NavLink class="nav-link" href="counter">
+                <span class="bi bi-plus-square-fill-nav-menu" aria-hidden="true"></span> Counter
+            </NavLink>
+        </div>
+        <div class="nav-item px-3">
+            <NavLink class="nav-link" href="weather">
+                <span class="bi bi-list-nested-nav-menu" aria-hidden="true"></span> Weather
+            </NavLink>
+        </div>
+
+        @if (GameService.SelectedGame == GameType.WormsUMH)
+        {
+            <div class="nav-item px-3">
+                <NavLink class="nav-link" href="wormsumh/translation">
+                    <span class="bi bi-plus-square-fill-nav-menu" aria-hidden="true"></span> Translation
+                </NavLink>
+            </div>
+
+            <div class="nav-item px-3">
+                <NavLink class="nav-link" href="wormsumh/patcher">
+                    <span class="bi bi-plus-square-fill-nav-menu" aria-hidden="true"></span> Worms UMH Patcher
+                </NavLink>
+            </div>
+            <div class="nav-item px-3">
+                <NavLink class="nav-link" href="wormsumh/xom2xml">
+                    <span class="bi bi-plus-square-fill-nav-menu" aria-hidden="true"></span> Worms Xom2XML
+                </NavLink>
+            </div>
+
+            <div class="nav-item px-3">
+                <NavLink class="nav-link" href="wormsumh/fev">
+                <span class="bi bi-plus-square-fill-nav-menu" aria-hidden="true"></span> Fev
+            </NavLink>
+             </div>
+        }
+
+        @if (GameService.SelectedGame == GameType.KCD2)
+        {
+            <div class="nav-item px-3">
+                <NavLink class="nav-link" href="kcd2/translation">
+                    <span class="bi bi-plus-square-fill-nav-menu" aria-hidden="true"></span> Translation
+                </NavLink>
+            </div>
+        }
+         <div class="nav-item px-3">
+            <NavLink class="nav-link" href="/game-settings">
+                <span class="bi bi-plus-square-fill-nav-menu" aria-hidden="true"></span> Налаштування
+            </NavLink>
+        </div>
+       
+    </nav>
+</div>
+@code {
+    protected override Task OnInitializedAsync()
+    {
+        GameService.OnGameChanged += StateHasChanged;
+        return base.OnInitializedAsync();
+    }
+}

@@ -1,0 +1,198 @@
+﻿@page "/game-settings"
+@using AveTranslatorM.Models
+@using AveTranslatorM.Worms.UMH.Helpers
+@inject WorkingService WorkingService
+@inject GameSelectionService GameService
+
+<h3>Налаштування</h3>
+
+<div class="nav nav-tabs mb-4">
+    <button class="nav-link @(activeTab == "game" ? "active" : "")"
+            @onclick='() => activeTab = "game"'>
+        Налаштування гри
+    </button>
+    <button class="nav-link @(activeTab == "gpt" ? "active" : "")"
+            @onclick='() => activeTab = "gpt"'>
+        Налаштування GPT
+    </button>
+</div>
+
+@if (activeTab == "game")
+{
+    <div class="mb-3">
+        <label class="form-label">Тип гри:</label>
+        <span class="badge bg-info">@GameService.SelectedGame</span>
+    </div>
+
+    <div class="mb-3">
+        <label class="form-label">Шлях до гри:</label>
+        <div class="input-group">
+            <InputText class="form-control" @bind-Value="settings.GamePath" @onblur="OnSettingsChanged" placeholder="C:\Games\Worms..." />
+            <button class="btn btn-outline-secondary" @onclick="PickGamePath">Вибрати…</button>
+        </div>
+    </div>
+
+    <div class="mb-3">
+        <label class="form-label">Робоча директорія:</label>
+        <div class="input-group">
+            <InputText class="form-control" @bind-Value="settings.WorkingDirectory" @onblur="OnSettingsChanged" placeholder="C:\Users\...\Working" />
+            <button class="btn btn-outline-secondary" @onclick="PickWorkingDirectory">Вибрати…</button>
+        </div>
+    </div>
+
+    <div class="mb-3">
+        <label class="form-label">Шаблон шляху експорту:</label>
+        <InputText class="form-control" @bind-Value="settings.ExportTemplate" @onblur="OnSettingsChanged" placeholder="Data\LanguagePC\{TranslatedName}" />
+        <div class="small text-muted">
+            Якщо шлях не задано в ручну - використовується цей шаблон.
+        </div>
+    </div>
+
+    <div class="mb-3">
+        <label class="form-label">Запит для перекладу:</label>
+        <InputTextArea class="form-control"
+                       @bind-Value="settings.GptQuery"
+                       @onblur="OnSettingsChanged"
+                       rows="3"
+                       placeholder="Переклади цей текст українською мовою" />
+    </div>
+}
+else
+{
+    <div class="mb-3">
+        <label class="form-label">API Key:</label>
+        <InputText class="form-control"
+                   @bind-Value="WorkingService.WorkingFile.GptSettings.ApiKey"
+                   @onblur="OnSettingsChanged"
+                   placeholder="sk-..." />
+        <div class="small text-muted">API ключ з OpenAI</div>
+    </div>
+
+    <div class="mb-3">
+        <label class="form-label">Модель GPT:</label>
+        <div class="mb-2">
+            <div class="form-check">
+                <input class="form-check-input" type="radio" name="modelInputType" id="predefinedModel" 
+                       checked="@(!isCustomModel)" @onchange="@(() => isCustomModel = false)">
+                <label class="form-check-label" for="predefinedModel">
+                    Вибрати зі списку
+                </label>
+            </div>
+            <div class="form-check">
+                <input class="form-check-input" type="radio" name="modelInputType" id="customModel" 
+                       checked="@isCustomModel" @onchange="@(() => isCustomModel = true)">
+                <label class="form-check-label" for="customModel">
+                    Ввести вручну
+                </label>
+            </div>
+        </div>
+
+        @if (isCustomModel)
+        {
+            <InputText class="form-control"
+                      @bind-Value="WorkingService.WorkingFile.GptSettings.Model"
+                      @onblur="OnSettingsChanged"
+                      placeholder="Введіть назву моделі" />
+        }
+        else
+        {
+            <InputSelect class="form-control"
+                        @bind-Value="selectedModel"
+                        @onblur="OnSettingsChanged">
+                @foreach (var model in Enum.GetValues<GPTModel>())
+                {
+                    <option value="@model">@model</option>
+                }
+            </InputSelect>
+        }
+        <div class="small text-muted">
+            Оберіть модель GPT зі списку або введіть назву вручну.
+        </div>
+    </div>
+
+    <div class="mb-3">
+        <label class="form-label">Максимальна кількість токенів:</label>
+        <InputNumber class="form-control"
+                     @bind-Value="WorkingService.WorkingFile.GptSettings.MaxTokens"
+                     @onblur="OnSettingsChanged" />
+        <div class="small text-muted">
+            Максимальна кількість токенів для відповіді. Більше значення - довші переклади, але більша вартість.
+        </div>
+    </div>
+
+   }
+
+    @if (saveMessage != null)
+    {
+        <div class="alert alert-success mt-2">@saveMessage</div>
+    }
+
+@code {
+    private WorkingGameSettings settings => WorkingService.CurrentGameSettings;
+    private string? saveMessage;
+    private string activeTab = "game";
+    private bool isCustomModel;
+    private GPTModel selectedModel
+    {
+        get =>  GPTModelExtensions.FromModelString(WorkingService.WorkingFile.GptSettings.Model);
+        set
+        {
+            WorkingService.WorkingFile.GptSettings.Model = value.ToModelString();
+        }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        GameService.OnGameChanged += StateHasChanged;
+        if (!WorkingService.HasCurrentGameSettings)
+            WorkingService.WorkingFile.GameSettings.Add(GameService.SelectedGame, new WorkingGameSettings());
+
+        // Автозаповнення для Worms
+        if (GameService.SelectedGame == GameType.WormsUMH && string.IsNullOrWhiteSpace(settings.GamePath))
+        {
+            var helper = new WormsUMHHelper();
+            var wormsPath = helper.TryFindWormsPath();
+            if (!string.IsNullOrWhiteSpace(wormsPath))
+                settings.GamePath = Path.GetDirectoryName(wormsPath)!;
+            await OnSettingsChanged();
+        }
+
+        isCustomModel = !Enum.GetValues<GPTModel>()
+            .Any(m => m.ToModelString() == WorkingService.WorkingFile.GptSettings.Model);
+    }
+
+    private async Task OnSettingsChanged(ChangeEventArgs? e = null)
+    {
+        saveMessage = "Налаштування збережено";
+        await WorkingService.SaveWorkingFile();
+        StateHasChanged();
+        await Task.Delay(2000);
+        saveMessage = null;
+        StateHasChanged();
+    }
+
+    private async Task OnSettingsChanged(FocusEventArgs e)
+    {
+        await OnSettingsChanged();
+    }
+
+    private async Task PickGamePath()
+    {
+        var result = await CommunityToolkit.Maui.Storage.FolderPicker.Default.PickAsync();
+        if (result.IsSuccessful)
+        {
+            settings.GamePath = result.Folder.Path;
+            await OnSettingsChanged();
+        }
+    }
+
+    private async Task PickWorkingDirectory()
+    {
+        var result = await CommunityToolkit.Maui.Storage.FolderPicker.Default.PickAsync();
+        if (result.IsSuccessful)
+        {
+            settings.WorkingDirectory = result.Folder.Path;
+            await OnSettingsChanged();
+        }
+    }
+}

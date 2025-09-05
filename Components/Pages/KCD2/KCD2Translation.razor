@@ -1,0 +1,183 @@
+﻿@page "/kcd2/translation"
+@using System.IO.Compression
+@using System.Xml.Linq
+@using AveTranslator.Client.Models
+@using AveTranslatorM.Components.Pages.Base
+@using AveTranslatorM.Models
+@using AveTranslatorM.Services
+@using System.Diagnostics
+@inject WorkingService WorkingService
+
+<PageTitle>KCD2 Translation</PageTitle>
+
+<BaseTranslation @ref="translationRef"
+                 OpenFileHandler="OpenFile"
+                 OpenFileFormat="DefaultOpenFileFormat"
+                 ExportTranslationHandler="ExportTranslation" />
+
+
+@code {
+    private BaseTranslation? translationRef;
+
+    protected List<string> DefaultOpenFileFormat => new() { ".pak", ".xml" };
+
+    protected async IAsyncEnumerable<FileWorkingTranslate?> OpenFile(FileResult file)
+    {
+        if (file.FileName.EndsWith(".pak"))
+        {
+            using var archive = new ZipArchive(await file.OpenReadAsync(), ZipArchiveMode.Read);
+
+            var entries = archive.Entries.Where(e => e.FullName.EndsWith(".xml", StringComparison.OrdinalIgnoreCase)).ToList();
+            foreach (var xmlEntry in entries)
+            {
+
+                using var stream = xmlEntry.Open();
+                var entr = await ParseXmlFile(stream, Path.GetFileNameWithoutExtension(file.FileName), file.FullPath);
+                if (entries.Count > 1 && entr != null)
+                    entr.MultipleFileInPak = true;
+                yield return entr;
+            }
+        }
+        else if (file.FileName.EndsWith(".xml"))
+        {
+            using var stream = await file.OpenReadAsync();
+            yield return await ParseXmlFile(stream, Path.GetFileNameWithoutExtension(file.FileName), file.FullPath);
+        }
+        yield break;
+
+    }
+
+    private async Task<FileWorkingTranslate?> ParseXmlFile(Stream stream, string fileName, string filePath)
+    {
+        try
+        {
+
+            string? modName = null;
+            string? insideGamePath = null;
+            if (WorkingService.CurrentGameSettings.GamePath != null)
+            {
+                if (filePath.StartsWith(WorkingService.CurrentGameSettings.GamePath))
+                {
+                    var relativePath = Path.GetRelativePath(WorkingService.CurrentGameSettings.GamePath, filePath);
+                    var pathParts = relativePath.Split(Path.DirectorySeparatorChar);
+
+                    if (pathParts.Length >= 2 &&
+                        pathParts[0].Equals("Mods", StringComparison.OrdinalIgnoreCase))
+                    {
+                        modName = pathParts[1];
+                    }
+                    insideGamePath = Path.GetDirectoryName(relativePath); ;
+                }
+            }
+
+            var doc = await XDocument.LoadAsync(stream, LoadOptions.None, CancellationToken.None);
+
+            var entries = new List<TranslationEntry>();
+
+            foreach (var row in doc.Descendants("Row"))
+            {
+                var cells = row.Elements("Cell").ToList();
+
+                if (cells.Count == 3)
+                {
+                    entries.Add(new TranslationEntry
+                    {
+                        Id = cells[0].Value,
+                        ValueOther = cells[1].Value,
+                        Value = cells[2].Value,
+                    });
+                }
+
+                else if (cells.Count == 2)
+                {
+                    entries.Add(new TranslationEntry
+                    {
+                        Id = cells[0].Value,
+                        Value = cells[1].Value
+                    });
+                }
+                else
+                {
+                    throw new Exception($"{nameof(ParseXmlFile)}: Unexpected number of <Cell>({cells.Count}) elements in <Row>.");
+                }
+            }
+
+            if (!entries.Any())
+                return null;
+
+            return new FileWorkingTranslate
+            {
+                Game = GameType.KCD2.ToString(),
+                OrigName = fileName,
+                TranslatedName = fileName,
+                ModName = modName,
+                OrigPath = insideGamePath,
+                Entries = entries
+            };
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"Error parsing XML file: {ex.Message}");
+            return null;
+        }
+    }
+
+    protected async Task<bool> ExportTranslation(FileWorkingTranslate translate, LogUserOutput log)
+    {
+        try
+        {
+            var xmlContent = new XDocument(
+                new XElement("Table",
+                    translate.Entries.Select(entry =>
+                    {
+                        if (string.IsNullOrWhiteSpace(entry.ValueOther))
+                            return new XElement("Row",
+                                new XElement("Cell", entry.Id),
+                                new XElement("Cell", entry.Translated ?? entry.Value)
+                            );
+                        else
+                            return new XElement("Row",
+                                   new XElement("Cell", entry.Id),
+                                   new XElement("Cell", entry.ValueOther),
+                                   new XElement("Cell", entry.Translated ?? entry.Value)
+                               );
+                    }
+                    )
+                )
+            );
+
+            // Зберігаємо XML
+            var exportPath = Path.Combine(
+                WorkingService.CurrentGameSettings.GamePath,
+                translationRef.InsideGameExportPath ?? $"Data\\{translate.TranslatedName}.xml"
+            );
+
+            Directory.CreateDirectory(Path.GetDirectoryName(exportPath)!);
+            if (File.Exists(exportPath))
+            {
+                log.Add($"Перезапис файлу: {exportPath}");
+                File.Delete(exportPath);
+            }
+            if (Path.GetExtension(exportPath) == ".pak")
+            {
+                using var archive = ZipFile.Open(exportPath, ZipArchiveMode.Create);
+                var entry = archive.CreateEntry($"{Path.GetFileNameWithoutExtension(exportPath)}.xml");
+                using var writer = new StreamWriter(entry.Open());
+                await xmlContent.SaveAsync(writer, SaveOptions.None, CancellationToken.None);
+            }
+            else
+            {
+                await using var writer = File.CreateText(exportPath);
+                await xmlContent.SaveAsync(writer, SaveOptions.None, CancellationToken.None);
+            }
+
+            log.Add($"Файл успішно збережено: {exportPath}");
+            return true;
+        }
+        catch (Exception ex)
+        {
+            log.Add($"Помилка при експорті: {ex.Message}");
+            return false;
+        }
+    }
+}

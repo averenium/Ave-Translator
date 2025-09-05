@@ -1,0 +1,467 @@
+﻿@* @page "/edit-translations"
+@using AveTranslatorM.Components.Ave
+@using AveTranslatorM.Models
+@using AveTranslatorM.Worms.UMH.Helpers
+@using Microsoft.AspNetCore.Components.QuickGrid
+@using Microsoft.AspNetCore.Components.Forms
+@using AveTranslator.Client.Models;
+@using System.Diagnostics
+@using System.Text.Json
+@using System.Xml.Linq
+<PageTitle>Edit Translations</PageTitle>
+<div class="row mb-3">
+    <!-- File Picker -->
+    <div class="col-md-4">
+        <label class="form-label">Завантажити файл:</label>
+        <InputFile OnChange="OnFileChange" accept=".xml,.json" class="form-control mb-2" />
+        <div class="small text-muted">Підтримуються .xml та .json</div>
+        @if (fileName != null)
+        {
+            <div class="mb-2 text-success">Завантажено: @fileName</div>
+        }
+    </div>
+
+    <!-- XOM Output File -->
+    <div class="col-md-4">
+        <label for="xomPath" class="form-label">XOM output file:</label>
+        <InputText id="xomPath" class="form-control mb-2" @bind-Value="xomOutputPath" />
+        <button class="btn btn-outline-secondary btn-sm mb-2" @onclick="PickXomOutputFileAsync">Choose…</button>
+        <small class="form-text text-muted">
+            Ви можете ввести нове ім'я файлу або вибрати існуючий.
+        </small>
+        <button class="btn btn-success btn-sm mt-2" @onclick="SaveToXomAsync" disabled="@isSavingToXom">Save to XOM</button>
+        <div class="mt-2">
+            <button class="btn btn-link btn-sm p-0" type="button" @onclick="() => showLogModal = true">
+                Показати лог у вікні
+            </button>
+        </div>
+    </div>
+    @if (showLogModal)
+    {
+        <div class="modal-backdrop fade show"></div>
+        <div class="modal d-block" tabindex="-1" style="background:rgba(0,0,0,0.2);">
+            <div class="modal-dialog modal-dialog-centered modal-sm">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title">Лог збереження XOM</h5>
+                        <button type="button" class="btn-close" @onclick="() => showLogModal = false"></button>
+                    </div>
+                    <div class="modal-body" style="max-height: 200px; overflow-y: auto; font-size: 0.9em;">
+                        @if (saveToXomResult != null)
+                        {
+                            <div class="alert alert-secondary">
+                                @saveToXomResult
+                            </div>
+                        }
+                        else
+                        {
+                            <span class="text-muted">Лог порожній</span>
+                        }
+                    </div>
+                    <div class="modal-footer">
+                        <button class="btn btn-secondary btn-sm" @onclick="() => showLogModal = false">Закрити</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    }
+
+    <!-- Translated Name -->
+    <div class="col-md-4">
+        <label for="translatedName" class="form-label">Working file name (TranslatedName):</label>
+        <InputText id="translatedName"
+                   class="form-control mb-2"
+                   @bind-Value="fileWorkingTranslate.TranslatedName" />
+        <div class="small text-muted">
+            Назва робочого файлу для перекладу.
+        </div>
+    </div>
+</div>
+
+@if (fileName != null)
+{
+    <div class="mb-2 text-success">Завантажено: @fileName</div>
+}
+
+@if (translations == null)
+{
+    <p>Завантажте файл локалізації для редагування.</p>
+}
+else
+{
+    <div>
+        <QuickGrid Items="@translations.AsQueryable()" >
+            <PropertyColumn Property="@(c => c.Id)" Sortable="true" />
+            <PropertyColumn Property="@(c => c.Value)" Sortable="true" />
+            <TemplateColumn Title="Translation" >
+                <div style="min-width:500px">
+                    <label>
+                        <InputTextArea Value="@context.Translated"
+                                       ValueChanged="@(v => OnTranslatedChanged(context, v))"
+                                       ValueExpression="() => context.Translated"
+                                       class="form-control"
+                                       style="resize:both;min-width:400px"
+                                       onfocus="this.style.height = 'auto'; this.style.height = (this.scrollHeight) + 'px';"
+                                       oninput="this.style.height = 'auto'; this.style.height = (this.scrollHeight) + 'px';" />
+                    </label>
+                </div>
+            </TemplateColumn>
+            <TemplateColumn >
+                <GPTTranslator Entry="@context" OnTranslated="OnAnyTranslationChanged" />
+            </TemplateColumn>
+        </QuickGrid>
+
+
+        <h3 class="mt-4">Add New Translation</h3>
+        <EditForm Model="@newTranslation" OnValidSubmit="HandleValidSubmit">
+            <DataAnnotationsValidator />
+            <ValidationSummary />
+
+            <div class="mb-3">
+                <label for="newId" class="form-label">ID</label>
+                <InputText id="newId" @bind-Value="newTranslation.Id" class="form-control" />
+            </div>
+            <div class="mb-3">
+                <label for="newValue" class="form-label">Value</label>
+                <InputText id="newValue" @bind-Value="newTranslation.Value" class="form-control" />
+            </div>
+            <button type="submit" class="btn btn-primary">Add Translation</button>
+        </EditForm>
+    </div>
+}
+
+@code {
+    private static readonly string WorkingDir = Path.Combine(Environment.CurrentDirectory, "Working");
+    private static readonly string OutDir = Path.Combine(Environment.CurrentDirectory, "out");
+
+    private List<TranslationEntry>? translations;
+    private TranslationEntry newTranslation = new TranslationEntry();
+    private string fileName;
+    private string idFilter;
+
+    private int currentCount = 0;
+
+    private FileWorkingTranslate fileWorkingTranslate = new FileWorkingTranslate();
+    private WorkingFile fileWorking = new WorkingFile();
+
+    private string? xomOutputPath;
+    private bool isSavingToXom = false;
+    private string? saveToXomResult;
+    WormsUMHHelper umhHelper = new WormsUMHHelper();
+    private bool showLogModal = false;
+    private JsonSerializerOptions saveOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web)
+        {
+            Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+            WriteIndented = true
+        };
+    private async Task OnTranslatedChanged(TranslationEntry entry, object? value)
+    {
+        entry.Translated = value?.ToString();
+        Debug.WriteLine($"OnChange: {entry.Id} = {entry.Translated}");
+        await SaveWorkingFile();
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        Directory.CreateDirectory(WorkingDir);
+
+        var workingJsonPath = Path.Combine(WorkingDir, "Working.json");
+        if (File.Exists(workingJsonPath))
+        {
+            var file = await File.ReadAllBytesAsync(workingJsonPath);
+            fileWorking = JsonSerializer.Deserialize<WorkingFile>(file);
+            if (fileWorking?.LastWorkingFile != null)
+            {
+                fileName = fileWorking.LastWorkingFile;
+            }
+
+            if (!string.IsNullOrEmpty(fileName) && File.Exists(fileName))
+            {
+                var translateFile = await File.ReadAllBytesAsync(fileName);
+                fileWorkingTranslate = JsonSerializer.Deserialize<FileWorkingTranslate>(translateFile, saveOptions);
+                translations = fileWorkingTranslate.Entries;
+            }
+        }
+        var wormsExe = umhHelper.TryFindWormsPath();
+        if(wormsExe != null)
+        {
+            xomOutputPath = Path.Combine(Path.GetDirectoryName(wormsExe), "Data", "Language", "PC");
+
+        }
+        await base.OnInitializedAsync();
+    }
+    private async Task PickXomOutputFileAsync()
+    {
+        var result = await FilePicker.Default.PickAsync();
+        if (result != null)
+        {
+            xomOutputPath = result.FullPath;
+            StateHasChanged();
+        }
+    }
+
+    private async Task SaveToXomAsync()
+    {
+        isSavingToXom = true;
+        saveToXomResult = null;
+        StateHasChanged();
+
+        try
+        {
+            // 1. Зберігаємо XML
+            Directory.CreateDirectory(OutDir);
+            var xmlFileName = $"{fileWorkingTranslate.TranslatedName}.xml";
+            var xmlPath = Path.Combine(OutDir, xmlFileName);
+            var finalXml = BuildFinalXml(fileWorkingTranslate);
+            await File.WriteAllTextAsync(xmlPath, finalXml);
+
+            // 2. Конвертуємо XML → XOM
+            var xomPath = xomOutputPath;
+            if (string.IsNullOrWhiteSpace(xomPath))
+            {
+                xomPath = Path.Combine(OutDir, $"{Path.GetFileNameWithoutExtension(fileWorkingTranslate.TranslatedName)}.xom");
+            }
+            else 
+                xomPath = Path.Combine(xomPath, Path.GetFileNameWithoutExtension(fileWorkingTranslate.TranslatedName) + ".xom");
+            var wrapper = new AveTranslatorM.Deps.Xom2Xml.Xom2XmlWrapper();
+            using var logStream = new MemoryStream();
+            int code = await Task.Run(() =>
+                wrapper.ConvertXmlToXom(xmlPath, xomPath, logStream)
+            );
+
+            logStream.Position = 0;
+            using var reader = new StreamReader(logStream);
+            var log = await reader.ReadToEndAsync();
+
+            saveToXomResult = code == 0
+                ? $"XOM saved: {xomPath}"
+                : $"XOM conversion failed (code {code}): {log}";
+        }
+        catch (Exception ex)
+        {
+            saveToXomResult = $"Error: {ex.Message}";
+        }
+        isSavingToXom = false;
+        StateHasChanged();
+    }
+
+    private async Task IncrementCount()
+    {
+        currentCount++;
+        var finalXml = BuildFinalXml(fileWorkingTranslate);
+
+        Directory.CreateDirectory(OutDir);
+        var finalPath = Path.Combine(OutDir, $"{fileWorkingTranslate.TranslatedName}.xml");
+        await File.WriteAllTextAsync(finalPath, finalXml);
+        Debug.WriteLine(" DClicked");
+        Console.WriteLine(" CClicked");
+    }
+
+    private async Task OnAnyTranslationChanged(TranslationEntry entry)
+    {
+        StateHasChanged();
+        await SaveWorkingFile();
+    }
+
+    private bool isSaving = false;
+    private bool saveQueued = false;
+
+    private async Task SaveWorkingFile()
+    {
+        Directory.CreateDirectory(WorkingDir);
+
+        var workingJsonPath = Path.Combine(WorkingDir, "Working.json");
+        if (isSaving)
+        {
+            if (saveQueued)
+                return;
+            saveQueued = true;
+            return;
+        }
+
+        isSaving = true;
+        try
+        {
+            await File.WriteAllBytesAsync(workingJsonPath, JsonSerializer.SerializeToUtf8Bytes(fileWorking));
+            var workingFilePath = Path.Combine(WorkingDir, Path.GetFileNameWithoutExtension(fileWorkingTranslate.TranslatedName) + ".json");
+            await File.WriteAllBytesAsync(workingFilePath, JsonSerializer.SerializeToUtf8Bytes(fileWorkingTranslate, saveOptions));
+        }
+        finally
+        {
+            isSaving = false;
+            if (saveQueued)
+            {
+                saveQueued = false;
+                await SaveWorkingFile();
+            }
+        }
+    }
+
+    private async Task OnFileChange(InputFileChangeEventArgs e)
+    {
+        try
+        {
+            Directory.CreateDirectory(WorkingDir);
+
+            var file = e.File;
+            fileName = file.Name;
+            using var stream = file.OpenReadStream(maxAllowedSize: int.MaxValue);
+            using var reader = new StreamReader(stream);
+            var fileData = await reader.ReadToEndAsync();
+            if (e.File.Name.EndsWith(".json"))
+            {
+                fileWorkingTranslate = JsonSerializer.Deserialize<FileWorkingTranslate>(fileData, saveOptions);
+                translations = fileWorkingTranslate.Entries;
+                fileWorking = new WorkingFile
+                    {
+                    LastWorkingFile = Path.Combine(WorkingDir, $"{Path.GetFileNameWithoutExtension(fileWorkingTranslate.TranslatedName)}.json")
+                    };
+            }
+            else
+            {
+                var doc = System.Xml.Linq.XDocument.Parse(fileData);
+                var parsed = ParseTranslations(doc);
+                translations = parsed;
+
+                var workingTranslatedName = Path.Combine(WorkingDir, $"{Path.GetFileNameWithoutExtension(fileName)}.json");
+
+                fileWorkingTranslate = new FileWorkingTranslate
+                    {
+                        OrigName = fileName,
+                        TranslatedName = Path.GetFileNameWithoutExtension(workingTranslatedName),
+                        Template = ReplaceAllXStringResourceDetailsWithSingleTemplate(doc),
+                        Entries = parsed
+                    };
+                fileWorking = new WorkingFile
+                    {
+                        LastWorkingFile = workingTranslatedName
+                    };
+            }
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine(ex);
+        }
+    }
+
+    private async Task OnFileChange2(InputFileChangeEventArgs e)
+    {
+        try
+        {
+            var file = e.File;
+            using var stream = file.OpenReadStream(maxAllowedSize: int.MaxValue);
+            using var reader = new StreamReader(stream);
+            var xml = await reader.ReadToEndAsync();
+
+            var doc = System.Xml.Linq.XDocument.Parse(xml);
+            foreach (var x in doc.Descendants("XStringResourceDetails"))
+            {
+                var id = x.Attribute("id")?.Value ?? x.Element("Name")?.Value;
+                var value = x.Element("Value")?.Value ?? "";
+                if (!string.IsNullOrWhiteSpace(id))
+                {
+                    var exist =
+                        translations?.FirstOrDefault(x => x.Id == id);
+                    if (exist != null)
+                        exist.ValueOther = value;
+                }
+            }
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine(ex);
+        }
+    }
+
+    private List<TranslationEntry> ParseTranslations(XDocument doc)
+    {
+        var list = new List<TranslationEntry>();
+        try
+        {
+            foreach (var x in doc.Descendants("XStringResourceDetails"))
+            {
+                var id = x.Attribute("id")?.Value ?? x.Element("Name")?.Value;
+                var value = x.Element("Value")?.Value ?? "";
+                if (!string.IsNullOrWhiteSpace(id))
+                    list.Add(new TranslationEntry { Id = id, Value = value });
+            }
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine(ex);
+            // handle parse error if needed
+        }
+        return list;
+    }
+
+    private string ReplaceAllXStringResourceDetailsWithSingleTemplate(XDocument doc)
+    {
+        try
+        {
+            var objectsContainer = doc.Descendants("xomObjects").FirstOrDefault();
+            if (objectsContainer == null)
+                return doc.ToString();
+
+            objectsContainer.Elements("XStringResourceDetails").Remove();
+            objectsContainer.Add(new XElement("ReplaceTemplate"));
+
+            return doc.ToString();
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine(ex);
+            return doc.ToString();
+        }
+    }
+
+    private string BuildFinalXml(FileWorkingTranslate fileWorkingTranslate)
+    {
+        if (string.IsNullOrWhiteSpace(fileWorkingTranslate.Template))
+            return string.Empty;
+
+        var doc = XDocument.Parse(fileWorkingTranslate.Template);
+
+        var detailsNodes = fileWorkingTranslate.Entries.Select(entry =>
+            new XElement("XStringResourceDetails",
+                new XAttribute("id", entry.Id ?? string.Empty),
+                new XElement("Value", EscapeXmlValue(!string.IsNullOrEmpty(entry.Translated) ? entry.Translated : entry.Value)),
+                new XElement("Name", entry.Id ?? string.Empty),
+                new XElement("Flags", 0)
+            )
+        ).ToList();
+
+        var templateNode = doc.Descendants("ReplaceTemplate").FirstOrDefault();
+
+        if (templateNode != null)
+        {
+            templateNode.ReplaceWith(detailsNodes);
+        }
+        doc.Declaration = new XDeclaration("1.0", "utf-8", null);
+
+        return
+        doc.Declaration.ToString()
+            + Environment.NewLine
+            +
+        doc.ToString()
+            .Replace(" />", "/>");
+    }
+
+    private string EscapeXmlValue(string? value)
+    {
+        if (string.IsNullOrEmpty(value))
+            return string.Empty;
+        return value;
+    }
+
+    private void RemoveTranslation(string id)
+    {
+        translations?.RemoveAll(t => t.Id == id);
+    }
+
+    private async Task HandleValidSubmit()
+    {
+        translations?.Add(new TranslationEntry { Id = newTranslation.Id, Value = newTranslation.Value });
+    }
+} *@

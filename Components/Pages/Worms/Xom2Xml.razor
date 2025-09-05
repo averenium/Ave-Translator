@@ -1,0 +1,153 @@
+﻿@page "/wormsumh/xom2xml"
+@using AveTranslatorM.Deps.Xom2Xml
+@using AveTranslatorM.Services
+@using AveTranslatorM.Worms.UMH.Helpers
+@inject IServiceProvider ServiceProvider
+
+<h3>Xom2Xml Converter</h3>
+
+<div class="mb-3">  
+    <label class="form-label">Mode:</label>
+    <select class="form-select" @bind="mode">
+        <option value="XmlToXom">XML → XOM</option>
+        <option value="XomToXml">XOM → XML</option>
+    </select>
+</div>
+
+<div class="mb-3">
+    <label class="form-label">Input file:</label>
+    <div class="input-group">
+        <InputText class="form-control" @bind-Value="inputFile" />
+        <button class="btn btn-outline-secondary" @onclick="PickInputFileAsync">Choose…</button>
+    </div>
+</div>
+        <div class="mb-3">
+            <label class="form-label">Output file:</label>
+            <div class="input-group">
+                <InputText class="form-control" @bind-Value="outputFile" @oninput="OnOutputFileInput" />
+                <button class="btn btn-outline-secondary" @onclick="PickOutputFileAsync">Choose…</button>
+            </div>
+            <small class="form-text text-muted">
+                You can enter a new file name or pick an existing file.
+            </small>
+        </div>
+
+        <div class="mb-3">
+            <label class="form-label">Scheme file:</label>
+            <InputText class="form-control" @bind-Value="schemeFile" />
+        </div>
+
+        <button class="btn btn-primary" @onclick="RunXom2XmlAsync" disabled="@isRunning">Convert</button>
+
+        @if (isRunning)
+        {
+            <div class="mt-2">Processing...</div>
+        }
+
+        @if (exitCode is not null)
+        {
+            <div class="mt-2">
+                <b>Exit code:</b> @exitCode
+            </div>
+        }
+
+        @if (logText.Any())
+        {
+            <div class="mt-3">
+                <label>Log:</label>
+                <pre style="max-height:300px;overflow:auto;">
+                        @foreach (var line in logText){
+                            @line 
+                            <br>
+                        }
+                </pre>
+            </div>
+        }
+
+        @code {
+            private enum Xom2XmlMode { XmlToXom, XomToXml }
+            private Xom2XmlMode mode = Xom2XmlMode.XmlToXom;
+
+            private string? inputFile;
+            private string? outputFile;
+            private string? schemeFile = Xom2XmlWrapper.DefaultSchemePath;
+            private LogUserOutput logText = new();
+            private int? exitCode;
+            private bool isRunning = false;
+            private string? selectedFilePath;
+            private bool outputFileManuallyChanged = false;
+
+            WormsUMHHelper umhHelper = new WormsUMHHelper();
+
+            protected override void OnInitialized()
+            {
+                var dir = Environment.CurrentDirectory;
+                inputFile = dir + Path.DirectorySeparatorChar;
+                outputFile = dir + Path.DirectorySeparatorChar;
+            }
+
+            private async Task PickInputFileAsync()
+            {
+                selectedFilePath = umhHelper.TryFindWormsPath();
+
+                var result = await FilePicker.Default.PickAsync();
+                if (result != null)
+                {
+                    inputFile = result.FullPath;
+
+                    // Автоматично підставляти output лише якщо користувач ще не змінював його вручну
+                    if (!outputFileManuallyChanged)
+                    {
+                        var inputFileName = Path.GetFileNameWithoutExtension(result.FullPath);
+                        var outputDir = Path.Combine(selectedFilePath, "Data", "Language", "PC");
+                        outputFile = Path.Combine(outputDir, inputFileName + ".xom");
+                    }
+
+                    StateHasChanged();
+                }
+            }
+
+    private async Task PickOutputFileAsync()
+    {
+        var result = await FilePicker.Default.PickAsync();
+        if (result != null)
+        {
+            outputFile = result.FullPath;
+            outputFileManuallyChanged = true;
+            StateHasChanged();
+        }
+    }
+
+    private void OnOutputFileInput(ChangeEventArgs e)
+    {
+        outputFile = e.Value?.ToString();
+        outputFileManuallyChanged = true;
+    }
+
+    private async Task RunXom2XmlAsync()
+    {
+
+        isRunning = true;
+        logText.Clear();
+        exitCode = null;
+        StateHasChanged();
+
+        var wrapper = new Xom2XmlWrapper
+        {
+            SchemePath = schemeFile ?? Xom2XmlWrapper.DefaultSchemePath
+        };
+
+        int code = 0;
+        await Task.Run(() =>
+        {
+            if (mode == Xom2XmlMode.XmlToXom)
+                code = wrapper.ConvertXmlToXom(inputFile ?? "", outputFile ?? "", logText, Path.GetDirectoryName(inputFile));
+            else
+                code = wrapper.ConvertXomToXml(inputFile ?? "", outputFile ?? "", logText);
+            exitCode = code;
+        });
+
+        isRunning = false;
+        StateHasChanged();
+    }
+}

@@ -1,0 +1,28 @@
+@inject GameSelectionService GameService
+@inject NavigationManager NavigationManager
+<div class="mb-2">
+    <label>Ãðà:</label>
+    <select class="form-select form-select-sm w-auto d-inline-block"
+            @onchange="OnGameChanged"
+            value="@GameService.SelectedGame">
+        <option value="@GameType.WormsUMH">Worms UMH</option>
+        <option value="@GameType.KCD2">KCD2</option>
+    </select>
+</div>
+
+@code 
+{
+    protected override void OnInitialized()
+    {
+        GameService.OnGameChanged += StateHasChanged;
+        GameService.Initialize(NavigationManager);
+
+    }
+    private void OnGameChanged(ChangeEventArgs e)
+    {
+        if (Enum.TryParse<GameType>(e.Value?.ToString(), out var game))
+        {
+            GameService.SetGame(game);
+        }
+    }
+}

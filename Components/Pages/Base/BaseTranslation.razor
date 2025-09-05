@@ -1,0 +1,708 @@
+﻿@page "/base-edit-translations"
+@using AveTranslatorM.Components.Ave
+@using AveTranslatorM.Models
+@using AveTranslatorM.Services
+@using Microsoft.AspNetCore.Components.QuickGrid
+@using Microsoft.AspNetCore.Components.Forms
+@using AveTranslator.Client.Models;
+@using System.Diagnostics
+@using System.Text.Json
+@using System.Xml.Linq
+@using CommunityToolkit.Maui.Storage;
+@inject WorkingService WorkingService
+@inject GameSelectionService GameService
+@inject NavigationManager NavigationManager
+
+<PageTitle>Edit Translations</PageTitle>
+@if (!WorkingService.HasCurrentGameSettings || WorkingService.CurrentGameSettings?.WorkingDirectory == null)
+{
+    <div class="alert alert-warning mt-4" style="max-width:600px;margin:auto;">
+        <h4 class="mb-3">Налаштування гри не завершено</h4>
+        <p>Щоб редагувати переклади, спочатку потрібно вказати робочу директорію у <b>налаштуваннях гри</b>.</p>
+        <a class="btn btn-primary mt-2" href="/game-settings">Перейти до налаштувань</a>
+    </div>
+    return;
+}
+<FixedPanel @bind-IsPanelVisible="isPanelVisible" Title="Налаштування">
+    <div class="mb-3">
+        <label class="form-label">Робоча директорія:</label>
+        <div class="mb-3 d-flex align-items-center">
+            <div class="working-dir-box flex-grow-1 me-2" title="@WorkingService.CurrentGameSettings.WorkingDirectory">
+                @WorkingService.ShortenWorkingDirPath(3)
+            </div>
+            <button class="btn btn-outline-secondary btn-sm" @onclick="PickWorkingDirectoryAsync">Вибрати…</button>
+        </div>
+
+        <div class="mb-2 d-flex gap-2 align-items-center flex-wrap ">
+            <button class="btn btn-outline-primary btn-sm d-flex align-items-center"
+                    title="Додати новий файл у робочу директорію"
+                    @onclick="PickWorkingFiles">
+                <span class="me-1">➕</span> Додати оригінал
+            </button>
+        </div>
+
+        @if (!string.IsNullOrEmpty(addFileError))
+        {
+            <div class="alert alert-danger alert-dismissible fade show py-2 px-3 my-2" role="alert" style="font-size:0.97em;">
+                <span>@addFileError</span>
+                <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"
+                        @onclick="() => addFileError = null"></button>
+            </div>
+        }
+
+        <ul class="working-files-list">
+            @foreach (var group in workingFiles.GroupBy(f => Path.GetDirectoryName(f))
+                        .OrderByDescending(g => g.Key == WorkingService.CurrentGameSettings.WorkingDirectory))
+            {
+                @if (group.Key != WorkingService.CurrentGameSettings.WorkingDirectory)
+                {
+                    <li class="working-files-group">
+                        <div class="group-header">
+                            <span class="me-2" style="font-size:1.1em;">📁</span>
+                            @Path.GetFileName(group.Key)
+                        </div>
+                        <ul class="group-files">
+                            @foreach (var file in group)
+                            {
+                                <li class="working-file-item @(file == WorkingService.CurrentGameSettings.LastWorkingFile ? "active" : "")"
+                                    title="@file">
+                                    <button class="btn btn-link btn-sm p-0 text-start w-100"
+                                            type="button"
+                                            @onclick="async () => await ReadTranslationFile(file)">
+                                        <span class="me-2" style="font-size:1.1em;">📄</span>
+                                        <span class="file-name">@Path.GetFileNameWithoutExtension(file)[..^12]</span>
+                                    </button>
+                                </li>
+                            }
+                        </ul>
+                    </li>
+                }
+                else
+                {
+                    <li class="working-files-group root-files">
+                        <ul class="group-files">
+                            @foreach (var file in group)
+                            {
+                                <li class="working-file-item @(file == WorkingService.CurrentGameSettings.LastWorkingFile ? "active" : "")"
+                                    title="@file">
+                                    <button class="btn btn-link btn-sm p-0 text-start w-100"
+                                            type="button"
+                                            @onclick="async () => await ReadTranslationFile(file)">
+                                        <span class="me-2" style="font-size:1.1em;">📄</span>
+                                        <span class="file-name">@Path.GetFileNameWithoutExtension(file)[..^12]</span>
+                                    </button>
+                                </li>
+                            }
+                        </ul>
+                    </li>
+                }
+            }
+        </ul>
+        @if (fileWorkingTranslate?.Entries != null && fileWorkingTranslate.TranslatedName != null)
+        {
+            <hr class="my-3" />
+
+            <div class="mb-2">
+                <button class="btn btn-outline-primary btn-sm d-flex align-items-center"
+                        title="Додати переклад до поточного файла"
+                        @onclick="PickExistTranslation">
+                    <span class="me-1">🌐</span> Додати переклад
+                </button>
+            </div>
+            <div class="mb-2">
+                <label for="translatedName" class="form-label">Назва перекладу (TranslatedName):</label>
+                <InputText id="translatedName"
+                           class="form-control form-control-sm"
+                           @bind-Value="fileWorkingTranslate.TranslatedName" />
+            </div>
+            <div class="mb-2">
+                <label for="insideGameExportPath" class="form-label">Шлях у грі для збереження:</label>
+                <InputText id="insideGameExportPath"
+                           class="form-control form-control-sm"
+                           @bind-Value="InsideGameExportPath"
+                           placeholder="наприклад, Data/Language/PC/ukr.xom" />
+                <div class="small text-muted">
+                    Введіть відносний шлях у грі, куди буде збережено результат.
+                </div>
+            </div>
+
+
+            <div class="d-flex justify-content-end mt-3">
+                <button class="btn btn-success btn-sm d-flex align-items-center"
+                        title="Зберегти/Компілювати у гру"
+                        @onclick="CompileToGameAsync" disabled="@isCompiling">
+                    <span class="me-1">💾</span> Зберегти у гру
+                </button>
+            </div>
+        }
+    </div>
+</FixedPanel>
+
+
+
+
+<div class="view-controls mb-3 d-flex justify-content-between align-items-center">
+    <div class="btn-group" role="group">
+        <button class="btn @(isTableView ? "btn-primary" : "btn-outline-primary")" @onclick="() => isTableView = true">
+            <span class="me-1">📊</span> Таблиця
+        </button>
+        <button class="btn @(!isTableView ? "btn-primary" : "btn-outline-primary")" @onclick="() => isTableView = false">
+            <span class="me-1">📝</span> Список
+        </button>
+    </div>
+    <div class="btn-group" role="group">
+        <div class="search-box">
+            <div class="input-group">
+                <button class="btn @(showUntranslatedOnly ? "btn-secondary" : "btn-outline-secondary")"
+                        title="Показати тільки неперекладені"
+                        @onclick="() => showUntranslatedOnly = !showUntranslatedOnly">
+                    <span>📝</span>
+                </button>
+                <input type="text"
+                       class="form-control border border-secondary"
+                       style="border-left:none !important; border-right: none!important;"
+                       placeholder="Пошук..."
+                       @bind-value="searchText"
+                       @bind-value:event="oninput" />
+                <button class="btn btn-outline-secondary" @onclick="() => searchText = null">
+                    ✕
+                </button>
+            </div>
+        </div>
+    </div>
+    <div class="btn-group" role="group">
+        <button class="btn btn-outline-secondary btn-toolbar"
+                title="Налаштування"
+                @onclick="() => isPanelVisible = true">
+            <span class="me-1">⚙️</span>
+        </button>
+        @if (compileLog.Any())
+        {
+            <button class="btn btn-outline-secondary btn-toolbar"
+                    title="Показати останній лог"
+                    @onclick="() => showCompileLog = true">
+                <span class="me-1">📋</span>
+            </button>
+        }
+        <button class="btn btn-outline-secondary btn-toolbar"
+                title="Зберегти/Компілювати у гру"
+                @onclick="CompileToGameAsync" disabled="@isCompiling">
+            <span class="me-1">💾</span>
+        </button>
+    </div>
+</div>
+@if (showCompileLog)
+{
+    <div class="modal-backdrop fade show"></div>
+    <div class="modal d-block" tabindex="-1" style="background:rgba(0,0,0,0.2);">
+        <div class="modal-dialog modal-dialog-centered modal-lg">
+            <div class="modal-content">
+                <div class="modal-header @(modalBorderClass?.Contains("success") == true ? "bg-success bg-opacity-25 text-dark" : modalBorderClass?.Contains("danger") == true ? "bg-danger bg-opacity-25 text-dark" : null)">
+                    <h5 class="modal-title">Лог компіляції</h5>
+                    <button type="button" class="btn-close" @onclick="() => showCompileLog = false"></button>
+                </div>
+                <div class="modal-body" style="max-height: 350px; overflow-y: auto; font-size: 0.95em;">
+                    <pre style="white-space: pre-wrap;">
+                                @foreach (var line in compileLog)
+                                {
+                                            @line 
+                        <br />
+                               }
+                          </pre>
+                </div>
+                <div class="modal-footer @(modalBorderClass?.Contains("success") == true ? "bg-success bg-opacity-25" : modalBorderClass?.Contains("danger") == true ? "bg-danger bg-opacity-25" : null)">
+                    <button class="btn btn-secondary btn-sm" @onclick="() => showCompileLog = false">Закрити</button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@if (translations != null)
+{
+    @if (isTableView)
+    {
+        <div class="grid-container">
+            <QuickGrid Items="@GetFilteredItems()" Class="translations-grid">
+                <PropertyColumn Title="ID"
+                                Property="@(c => c.Id)"
+                                Sortable="true"
+                                Class="id-column" />
+                <TemplateColumn Title="Оригінал"
+                                Class="original-column"
+                                Sortable="true" SortBy="@(GridSort<TranslationEntry>.ByAscending(p => p.Value))">
+                    <div class="translation-container">
+
+                        <div class="translation-tools">
+                        </div>
+                        <div class="translation-text original">
+                            @if (!string.IsNullOrEmpty(context.ValueOther) && context.ValueOther != context.Value)
+                            {
+                                <div class="helper-text">@context.ValueOther</div>
+                            }
+                            else
+                            {
+
+                            }
+                            <div class="main-text">@context.Value</div>
+                        </div>
+                    </div>
+                </TemplateColumn>
+                <TemplateColumn Title="Переклад" Class="translation-column"
+                                Sortable="true" SortBy="@(GridSort<TranslationEntry>.ByAscending(p => p.Translated))">
+                    <div class="translation-container">
+                        <div class="translation-tools">
+                            <GPTTranslator Entry="@context" OnTranslated="OnAnyTranslationChanged" />
+                        </div>
+                        <AdaptiveTextBox Value="@context.Translated"
+                                         ValueChanged="@(v => OnTranslatedChanged(context, v))" />
+                    </div>
+                </TemplateColumn>
+            </QuickGrid>
+        </div>
+    }
+    else
+    {
+        <div class="translation-list">
+            @foreach (var entry in GetFilteredItems())
+            {
+                <div class="translation-item mb-4">
+                    <div class="translation-header d-flex justify-content-between align-items-center mb-2">
+                        <span class="translation-id">ID: @entry.Id</span>
+                        <GPTTranslator Entry="@entry" OnTranslated="OnAnyTranslationChanged" />
+                    </div>
+
+                    <div class="translation-content">
+                        <div class="translation-text original mb-3">
+                            @if (!string.IsNullOrEmpty(entry.ValueOther) && entry.ValueOther != entry.Value)
+                            {
+                                <div class="helper-text">@entry.ValueOther</div>
+                            }
+                            <div class="main-text">@entry.Value</div>
+                        </div>
+                        <AdaptiveTextBox Value="@entry.Translated"
+                                         ValueChanged="@(v => OnTranslatedChanged(entry, v))" />
+                    </div>
+                </div>
+            }
+        </div>
+    }
+}
+@code {
+
+    [Parameter]
+    public List<string> OpenFileFormat { get; set; } = new();
+
+    [Parameter]
+    public Func<FileResult, IAsyncEnumerable<FileWorkingTranslate?>>? OpenFileHandler { get; set; } = null;
+
+    [Parameter]
+    public Func<FileWorkingTranslate, LogUserOutput, Task<bool>>? ExportTranslationHandler { get; set; } = null;
+
+    private List<TranslationEntry>? translations;
+    private TranslationEntry newTranslation = new TranslationEntry();
+    private FileWorkingTranslate fileWorkingTranslate = new FileWorkingTranslate();
+    public FileWorkingTranslate GetFileWorkingTranslate() => fileWorkingTranslate;
+
+    private string? addFileError;
+    private bool isCompiling = false;
+    private bool showCompileLog = false;
+    private LogUserOutput compileLog = new();
+    private string? modalBorderClass;
+    private bool isTableView = true;
+    private bool isPanelVisible;
+    private string? searchText;
+    private bool showUntranslatedOnly;
+
+    public string InsideGameExportPath
+    {
+        get
+        {
+            if (!string.IsNullOrEmpty(fileWorkingTranslate.InsideGameExportPath))
+                return fileWorkingTranslate.InsideGameExportPath;
+            else
+                return WorkingService.CurrentGameSettings.ExportTemplate
+                .Replace("{ModName}", fileWorkingTranslate.ModName ?? fileWorkingTranslate.OrigName)
+                .Replace("{TranslatedName}", fileWorkingTranslate.TranslatedName ?? fileWorkingTranslate.OrigName);
+        }
+        set
+        {
+            fileWorkingTranslate.InsideGameExportPath = value;
+        }
+    }
+    private IQueryable<TranslationEntry> GetFilteredItems()
+    {
+        var query = translations?.AsQueryable() ?? Enumerable.Empty<TranslationEntry>().AsQueryable();
+
+        if (showUntranslatedOnly)
+        {
+            query = query.Where(t => string.IsNullOrEmpty(t.Translated));
+        }
+
+        if (!string.IsNullOrWhiteSpace(searchText))
+        {
+            query = query.Where(t =>
+                (t.Id != null && t.Id.Contains(searchText, StringComparison.OrdinalIgnoreCase)) ||
+                (t.Value != null && t.Value.Contains(searchText, StringComparison.OrdinalIgnoreCase)) ||
+                (t.ValueOther != null && t.ValueOther.Contains(searchText, StringComparison.OrdinalIgnoreCase)) ||
+                (t.Translated != null && t.Translated.Contains(searchText, StringComparison.OrdinalIgnoreCase)));
+        }
+
+        return query;
+    }
+
+    private JsonSerializerOptions saveOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web)
+    {
+        Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+        WriteIndented = true
+    };
+
+    protected override Task OnParametersSetAsync()
+    {
+
+        OpenFileFormat.Add(".json");
+        return base.OnParametersSetAsync();
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!WorkingService.HasCurrentGameSettings)
+            return;
+        compileLog.OnLogAdded += () => InvokeAsync(StateHasChanged);
+
+        await ReadTranslationFile(WorkingService.CurrentGameSettings.LastWorkingFile, true);
+        GetWorkingTranslations();
+
+        await base.OnInitializedAsync();
+    }
+
+    private async Task OnTranslatedChanged(TranslationEntry entry, object? value)
+    {
+        entry.Translated = value?.ToString();
+        Debug.WriteLine($"OnChange: {entry.Id} = {entry.Translated}");
+        await SaveWorkingFile();
+    }
+
+    private async Task OnAnyTranslationChanged(TranslationEntry entry)
+    {
+        StateHasChanged();
+        await SaveWorkingFile();
+    }
+
+    private bool isSaving = false;
+    private bool saveQueued = false;
+
+    private void ExpandTextArea(object element)
+    {
+        if (element is not IJSInProcessObjectReference jsElement) return;
+
+        jsElement.InvokeVoid("eval", @"
+        this.style.height = 'auto';
+        this.style.height = (this.scrollHeight) + 'px';
+    ");
+    }
+
+    private void AdjustHeight(object element)
+    {
+        if (element is not IJSInProcessObjectReference jsElement) return;
+
+        jsElement.InvokeVoid("eval", @"
+        this.style.height = 'auto';
+        this.style.height = (this.scrollHeight) + 'px';
+    ");
+    }
+    private async Task SaveWorkingFile()
+    {
+        Directory.CreateDirectory(WorkingService.CurrentGameSettings.WorkingDirectory);
+        if (isSaving)
+        {
+            if (saveQueued)
+                return;
+            saveQueued = true;
+            return;
+        }
+
+        isSaving = true;
+        try
+        {
+            await WorkingService.SaveWorkingFile();
+            var destFileName = string.IsNullOrEmpty(fileWorkingTranslate.ModName)
+                ? Path.Combine(WorkingService.CurrentGameSettings.WorkingDirectory, Path.GetFileNameWithoutExtension(fileWorkingTranslate.TranslatedName) + ".Translation.json")
+                : Path.Combine(WorkingService.CurrentGameSettings.WorkingDirectory, fileWorkingTranslate.ModName, Path.GetFileNameWithoutExtension(fileWorkingTranslate.TranslatedName) + ".Translation.json");
+
+            await File.WriteAllBytesAsync(destFileName, JsonSerializer.SerializeToUtf8Bytes(fileWorkingTranslate, saveOptions));
+        }
+        finally
+        {
+            isSaving = false;
+            if (saveQueued)
+            {
+                saveQueued = false;
+                await SaveWorkingFile();
+            }
+        }
+    }
+
+    private async Task ReadTranslationFile(string? path, bool init = false)
+    {
+        if (!string.IsNullOrEmpty(path) && File.Exists(path))
+        {
+            var translateFile = await File.ReadAllBytesAsync(path);
+            var file = JsonSerializer.Deserialize<FileWorkingTranslate>(translateFile, saveOptions);
+            await SetTranslationFile(file, path, init);
+        }
+    }
+    private async Task SetTranslationFile(FileWorkingTranslate? translateFile, string path, bool init = false)
+    {
+        if (translateFile != null)
+        {
+            fileWorkingTranslate = translateFile;
+            translations = fileWorkingTranslate.Entries;
+            if (!init)
+            {
+                WorkingService.CurrentGameSettings.LastWorkingFile = path;
+                await WorkingService.SaveWorkingFile();
+            }
+            StateHasChanged();
+        }
+    }
+
+    private List<string> workingFiles = new List<string>();
+
+    private async Task PickWorkingDirectoryAsync()
+    {
+        var result = await FolderPicker.Default.PickAsync();
+        if (result.IsSuccessful)
+        {
+            var path = result.Folder.Path;
+            WorkingService.CurrentGameSettings.WorkingDirectory = path;
+            await WorkingService.SaveWorkingFile();
+            GetWorkingTranslations();
+            StateHasChanged();
+        }
+    }
+
+    private async Task PickWorkingFiles()
+    {
+        addFileError = null;
+        var result = await FilePicker.Default.PickMultipleAsync(new PickOptions
+        {
+            FileTypes = new FilePickerFileType(new Dictionary<DevicePlatform, IEnumerable<string>>
+            {
+                { DevicePlatform.WinUI, OpenFileFormat  }
+
+            }),
+        });
+        if (result.Any())
+        {
+            foreach (var file in result)
+            {
+                var translationName = file.FileName.EndsWith(".Translation.json") ?
+                    file.FileName[..^13] : Path.GetFileNameWithoutExtension(file.FileName);
+
+                if (workingFiles.Any(x => Path.GetFileNameWithoutExtension(x) == translationName + ".Translation"))
+                {
+                    addFileError += $"Файл {translationName} вже існує. {Environment.NewLine}";
+                    continue;
+                }
+
+                if (file.FileName.EndsWith(".json"))
+                {
+                    var translateFile = await File.ReadAllBytesAsync(file.FullPath);
+                    var translation = JsonSerializer.Deserialize<FileWorkingTranslate>(translateFile, saveOptions);
+                    if (translation != null && translation.Entries != null &&
+                        (translation.Game == null || translation.Game.Equals(GameService.SelectedGame.ToString(), StringComparison.InvariantCultureIgnoreCase)))
+                    {
+
+                        var destFileName = string.IsNullOrEmpty(translation.ModName)
+                            ? Path.Combine(WorkingService.CurrentGameSettings.WorkingDirectory, Path.GetFileNameWithoutExtension(file.FileName) + ".Translation.json")
+                            : Path.Combine(WorkingService.CurrentGameSettings.WorkingDirectory, translation.ModName, Path.GetFileNameWithoutExtension(file.FileName) + ".Translation.json");
+
+                        Directory.CreateDirectory(Path.GetDirectoryName(destFileName)!);
+                        using var src = await file.OpenReadAsync();
+                        using var dst = File.Create(destFileName);
+                        await src.CopyToAsync(dst);
+                        Debug.WriteLine($"Added translation to working dir: {translationName}");
+                        if (result.Count() == 1)
+                            await SetTranslationFile(translation, destFileName);
+                        continue;
+                    }
+
+                }
+                if (OpenFileHandler != null)
+                {
+                    try
+                    {
+                        var translationList = OpenFileHandler(file);
+                        if (translationList == null)
+                        {
+                            addFileError += $"Не вдалося відкрити файл {file.FileName}: невідомий формат.{Environment.NewLine}";
+                            continue;
+                        }
+                        var translationCount = 0;
+                        string destFileName = "";
+                        FileWorkingTranslate? lastTranslation = null;
+                        await foreach (var translation in translationList)
+                        {
+                            if (translation == null || translation.Entries == null)
+                            {
+                                addFileError += $"Не вдалося відкрити файл {file.FileName}: невідомий формат.{Environment.NewLine}";
+                                continue;
+                            }
+                            translationCount++;
+                            translation.Game = GameService.SelectedGame.ToString();
+                            destFileName = string.IsNullOrEmpty(translation.ModName)
+                                 ? Path.Combine(WorkingService.CurrentGameSettings.WorkingDirectory, Path.GetFileNameWithoutExtension(file.FileName) + ".Translation.json")
+                                 : Path.Combine(WorkingService.CurrentGameSettings.WorkingDirectory, translation.ModName, Path.GetFileNameWithoutExtension(file.FileName) + ".Translation.json");
+                            Directory.CreateDirectory(Path.GetDirectoryName(destFileName)!);
+
+                            await File.WriteAllBytesAsync(destFileName, JsonSerializer.SerializeToUtf8Bytes(translation, saveOptions));
+                            lastTranslation = translation;
+                        }
+                        if (result.Count() == 1 && translationCount == 1 && lastTranslation != null)
+                            await SetTranslationFile(lastTranslation, destFileName);
+                    }
+                    catch (Exception ex)
+                    {
+                        addFileError += $"Не вдалося відкрити файл {file.FileName}: {ex.Message}{Environment.NewLine}";
+                        Debug.WriteLine(ex);
+                    }
+                }
+            }
+
+            GetWorkingTranslations();
+            StateHasChanged();
+        }
+    }
+
+    private async Task PickExistTranslation()
+    {
+        await PickExistTranslation(false);
+    }
+
+    private async Task PickExistTranslation(bool overrideCurrent)
+    {
+        addFileError = null;
+        var file = await FilePicker.Default.PickAsync(new PickOptions
+        {
+            FileTypes = new FilePickerFileType(new Dictionary<DevicePlatform, IEnumerable<string>>
+            {
+                { DevicePlatform.WinUI, OpenFileFormat  }
+
+            }),
+        });
+        if (file != null)
+        {
+
+            var translationName = file.FileName.EndsWith(".Translation.json") ?
+                 file.FileName[..^13] : Path.GetFileNameWithoutExtension(file.FileName);
+
+
+            IAsyncEnumerable<FileWorkingTranslate?> selectedTranslations = null;
+            if (file.FileName.EndsWith(".json"))
+            {
+                var translateFile = await File.ReadAllBytesAsync(file.FullPath);
+                var translation = JsonSerializer.Deserialize<FileWorkingTranslate>(translateFile, saveOptions);
+                if (translation != null && translation.Entries != null)
+                {
+                    selectedTranslations = GetSingleTranslationAsync(translation);
+                }
+
+            }
+            if (selectedTranslations == null && OpenFileHandler != null)
+            {
+                try
+                {
+                    var translation = OpenFileHandler(file);
+                    if (translation != null)
+                    {
+                        selectedTranslations = translation;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    addFileError += $"Не вдалося відкрити файл {file.FileName}: {ex.Message}{Environment.NewLine}";
+                    Debug.WriteLine(ex);
+                }
+
+            }
+
+            if (selectedTranslations != null)
+            {
+                await foreach (var translation in selectedTranslations)
+                {
+                    if (translation != null && translation.Entries != null)
+                        foreach (var entry in translation.Entries)
+                        {
+                            var data = fileWorkingTranslate.Entries.FirstOrDefault(x => x.Id == entry.Id);
+                            if (data != null && (data.Translated == null || overrideCurrent))
+                            {
+                                data.Translated = !string.IsNullOrEmpty(entry.Translated) ? entry.Translated : entry.Value;
+                            }
+                        }
+                }
+                await SaveWorkingFile();
+                StateHasChanged();
+            }
+            else
+                addFileError += $"Не вдалося відкрити файл {file.FileName}: невідомий формат.{Environment.NewLine}";
+            StateHasChanged();
+        }
+    }
+
+    private async IAsyncEnumerable<FileWorkingTranslate> GetSingleTranslationAsync(FileWorkingTranslate translation)
+    {
+        yield return translation;
+    }
+
+    private void GetWorkingTranslations()
+    {
+        workingFiles.Clear();
+        Directory.CreateDirectory(WorkingService.CurrentGameSettings.WorkingDirectory);
+
+        // Отримуємо всі файли .Translation.json рекурсивно
+        workingFiles.AddRange(Directory.EnumerateFiles(
+            WorkingService.CurrentGameSettings.WorkingDirectory,
+            "*.Translation.json",
+            SearchOption.AllDirectories));
+    }
+
+    private async Task CompileToGameAsync()
+    {
+        isCompiling = true;
+        compileLog.Clear();
+        showCompileLog = true;
+        modalBorderClass = null;
+        StateHasChanged();
+
+        if (ExportTranslationHandler == null)
+        {
+            compileLog.Add("ExportTranslationHandler is not set.");
+        }
+        else
+        {
+            var result = await ExportTranslationHandler.Invoke(fileWorkingTranslate, compileLog);
+            if (result)
+            {
+                compileLog.Add("Компіляція завершена успішно.");
+                modalBorderClass = "border border-3 border-success";
+                await Task.Delay(5000);
+                showCompileLog = false;
+            }
+            else
+            {
+                compileLog.Add("Компіляція завершилася з помилками.");
+                modalBorderClass = "border border-3 border-danger";
+            }
+            isCompiling = false;
+        }
+        StateHasChanged();
+    }
+
+
+    private async Task HandleValidSubmit()
+    {
+        translations?.Add(new TranslationEntry { Id = newTranslation.Id, Value = newTranslation.Value });
+    }
+
+}

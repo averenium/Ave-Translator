@@ -1,0 +1,55 @@
+﻿@page "/wormsumh/fev"
+@using AveTranslatorM.Fev
+
+<h3>FEV File Reader</h3>
+
+<button class="btn btn-primary mb-2" @onclick="PickFevFileAsync">Вибрати FEV файл</button>
+@if (!string.IsNullOrEmpty(selectedFileName))
+{
+    <div class="mb-2 text-success">Selected: @selectedFileName</div>
+}
+@if (fevFile != null)
+{
+    <div class="alert alert-info mt-2">
+        <b>Magic:</b> @fevFile.Magic<br />
+    </div>
+}
+@if (!string.IsNullOrEmpty(errorMessage))
+{
+    <div class="alert alert-danger">@errorMessage</div>
+}
+
+@code {
+    private string? selectedFileName;
+    private FevFile? fevFile;
+    private string? errorMessage;
+
+    private async Task PickFevFileAsync()
+    {
+        errorMessage = null;
+        fevFile = null;
+        try
+        {
+            var result = await FilePicker.Default.PickAsync(new PickOptions
+            {
+                PickerTitle = "Виберіть FEV файл"
+            });
+
+            if (result != null)
+            {
+                selectedFileName = result.FileName;
+
+                // Копіюємо файл у тимчасову директорію для роботи з ним
+                var tempPath = Path.Combine(FileSystem.CacheDirectory, result.FileName);
+                using var sourceStream = await result.OpenReadAsync();
+
+                FMODEventFile fMODEventFile = new FMODEventFile(sourceStream);
+
+            }
+        }
+        catch (Exception ex)
+        {
+            errorMessage = ex.Message;
+        }
+    }
+}

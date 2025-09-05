@@ -1,0 +1,27 @@
+﻿<div class="context-menu @(_isVisible ? "visible" : "")"
+     style="left: @(X)px; top: @(Y)px">
+    @ChildContent
+</div>
+
+@code {
+    [Parameter]
+    public RenderFragment? ChildContent { get; set; }
+
+    private bool _isVisible;
+    public double X { get; set; }
+    public double Y { get; set; }
+
+    public void Show(double x, double y)
+    {
+        X = x;
+        Y = y;
+        _isVisible = true;
+        StateHasChanged();
+    }
+
+    public void Hide()
+    {
+        _isVisible = false;
+        StateHasChanged();
+    }
+}

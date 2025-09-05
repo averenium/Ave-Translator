@@ -1,0 +1,221 @@
+﻿@page "/wormsumh/translation"
+@using AveTranslator.Client.Models
+@using AveTranslatorM.Components.Pages.Base
+@using AveTranslatorM.Models
+@using AveTranslatorM.Services
+@using AveTranslatorM.Worms.UMH.Helpers
+@using Microsoft.AspNetCore.Components.Forms
+@using System.Diagnostics
+@using System.Text.Json
+@using System.Xml.Linq
+@using System.Text
+
+@inject WorkingService WorkingService
+
+<PageTitle>Worms Translation (XOM/XML)</PageTitle>
+
+<!-- Translation UI (підключення дочірнього компонента) -->
+<BaseTranslation @ref="translationRef"
+                 OpenFileHandler="ReadOpenFile"
+                 OpenFileFormat="@(new List<string>(){".xml", ".xom"})"
+                 ExportTranslationHandler="SaveToXomAsync" />
+
+@code {
+
+    private BaseTranslation? translationRef;
+    WormsUMHHelper umhHelper = new WormsUMHHelper();
+
+    private JsonSerializerOptions saveOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web)
+    {
+        Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+        WriteIndented = true
+    };
+
+
+
+    private async Task<bool> SaveToXomAsync(FileWorkingTranslate translate, LogUserOutput logBuilder)
+    {
+        try
+        {
+            if (translationRef == null)
+            {
+                logBuilder.Add("Error: translationRef is null");
+                return false;
+            }
+            if (!translationRef.InsideGameExportPath.EndsWith(".xml") && !translationRef.InsideGameExportPath.EndsWith(".xom"))
+            {
+                logBuilder.Add("Помилка: неправильне розширення зберігнаємого файлу");
+                return false;
+            }
+
+            var tmpFolder = Path.Combine(Directory.GetCurrentDirectory(), "Temp");
+            // 1. Зберігаємо XML
+            Directory.CreateDirectory(tmpFolder);
+
+            var xmlFileName = $"{translate.TranslatedName}.xml";
+            var xmlPath = Path.Combine(tmpFolder, xmlFileName);
+            var finalXml = BuildFinalXml(translate);
+            await File.WriteAllTextAsync(xmlPath, finalXml);
+            logBuilder.Add($"XML saved: {xmlPath}");
+
+            if (WorkingService.CurrentGameSettings?.GamePath == null)
+            {
+                logBuilder.Add("Error: GamePath is null");
+                return false;
+            }
+            var outPath = Path.Combine(WorkingService.CurrentGameSettings.GamePath, translationRef.InsideGameExportPath);
+
+            if (outPath.EndsWith(".xml"))
+            {
+                File.Copy(xmlPath, outPath);
+                logBuilder.Add($"XML copied to game folder: {outPath}");
+                return true;
+            }
+
+
+
+            var wrapper = new AveTranslatorM.Deps.Xom2Xml.Xom2XmlWrapper();
+            int code = await Task.Run(() =>
+                wrapper.ConvertXmlToXom(xmlPath, outPath, logBuilder)
+            );
+            if( code == 0)
+            {
+                logBuilder.Add($"XOM saved: {outPath}");
+                return true;
+            }
+            else
+            {
+                logBuilder.Add($"XOM conversion failed (code {code})");
+                return false;
+            }
+        }
+        catch (Exception ex)
+        {
+            logBuilder.Add($"Error: {ex.Message}");
+            return false;
+        }
+    }
+
+    // Допоміжний метод для побудови XML (можна винести в окремий сервіс)
+    private string BuildFinalXml(FileWorkingTranslate fileWorkingTranslate)
+    {
+        if (string.IsNullOrWhiteSpace(fileWorkingTranslate.Template))
+            return string.Empty;
+
+        var doc = XDocument.Parse(fileWorkingTranslate.Template);
+
+        var detailsNodes = fileWorkingTranslate.Entries.Select(entry =>
+            new XElement("XStringResourceDetails",
+                new XAttribute("id", entry.Id ?? string.Empty),
+                new XElement("Value", EscapeXmlValue(!string.IsNullOrEmpty(entry.Translated) ? entry.Translated : entry.Value)),
+                new XElement("Name", entry.Id ?? string.Empty),
+                new XElement("Flags", 0)
+            )
+        ).ToList();
+
+        var templateNode = doc.Descendants("ReplaceTemplate").FirstOrDefault();
+
+        if (templateNode != null)
+        {
+            templateNode.ReplaceWith(detailsNodes);
+        }
+        doc.Declaration = new XDeclaration("1.0", "utf-8", null);
+
+        return
+            doc.Declaration.ToString()
+            + Environment.NewLine
+            + doc.ToString()
+                .Replace(" />", "/>");
+    }
+
+    private string EscapeXmlValue(string? value)
+    {
+        if (string.IsNullOrEmpty(value))
+            return string.Empty;
+        return value;
+    }
+
+    public async IAsyncEnumerable<FileWorkingTranslate?> ReadOpenFile(FileResult fileResult)
+    {
+        if (fileResult == null)
+            throw new ArgumentNullException(nameof(fileResult));
+        XDocument doc = null;
+        if (fileResult.FileName.EndsWith(".xom", StringComparison.OrdinalIgnoreCase))
+        {
+            var tmpFolder = Path.Combine(Directory.GetCurrentDirectory(), "Temp");
+            Directory.CreateDirectory(tmpFolder);
+            var tempXmlPath = Path.Combine(tmpFolder, $"{Path.GetFileNameWithoutExtension(fileResult.FileName)}.xml");
+            if (File.Exists(tempXmlPath))
+                File.Delete(tempXmlPath);
+
+            var wrapper = new AveTranslatorM.Deps.Xom2Xml.Xom2XmlWrapper();
+            int code = await Task.Run(() =>
+                wrapper.ConvertXomToXml(fileResult.FullPath, tempXmlPath, null)
+            );
+            using var stream = File.OpenRead(tempXmlPath);
+            doc = System.Xml.Linq.XDocument.Load(stream);
+        }
+
+        if (fileResult.FileName.EndsWith(".xml", StringComparison.OrdinalIgnoreCase))
+        {
+            using var stream = await fileResult.OpenReadAsync();
+            doc = System.Xml.Linq.XDocument.Load(stream);
+        }
+        if (doc != null)
+        {
+            var parsed = ParseTranslations(doc);
+
+            var fileName = Path.GetFileNameWithoutExtension(fileResult.FileName);
+            var fileWorkingTranslate = new FileWorkingTranslate
+            {
+                OrigName = fileName,
+                TranslatedName = fileName,
+                Template = ReplaceAllXStringResourceDetailsWithSingleTemplate(doc),
+                Entries = parsed
+            };
+            yield return fileWorkingTranslate;
+        }
+        yield return null;
+
+    }
+
+    private List<TranslationEntry> ParseTranslations(XDocument doc)
+    {
+        var list = new List<TranslationEntry>();
+        try
+        {
+            foreach (var x in doc.Descendants("XStringResourceDetails"))
+            {
+                var id = x.Attribute("id")?.Value ?? x.Element("Name")?.Value;
+                var value = x.Element("Value")?.Value ?? "";
+                if (!string.IsNullOrWhiteSpace(id))
+                    list.Add(new TranslationEntry { Id = id, Value = value });
+            }
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine(ex);
+        }
+        return list;
+    }
+
+    private string ReplaceAllXStringResourceDetailsWithSingleTemplate(XDocument doc)
+    {
+        try
+        {
+            var objectsContainer = doc.Descendants("xomObjects").FirstOrDefault();
+            if (objectsContainer == null)
+                return doc.ToString();
+
+            objectsContainer.Elements("XStringResourceDetails").Remove();
+            objectsContainer.Add(new XElement("ReplaceTemplate"));
+
+            return doc.ToString();
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine(ex);
+            return doc.ToString();
+        }
+    }
+}

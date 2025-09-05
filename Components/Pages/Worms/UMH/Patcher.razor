@@ -1,0 +1,74 @@
+﻿@page "/wormsumh/patcher"
+@using AveTranslatorM.Worms.UMH.Helpers
+@using AveTranslatorM.Worms.UMH.LanguagePatcher
+
+<h1>File Picker Example</h1>
+
+<div class="mb-3">
+    <label for="filePath" class="form-label">Selected file path:</label>
+    <InputText id="filePath" class="form-control" @bind-Value="selectedFilePath" readonly />
+</div>
+<button class="btn btn-secondary" @onclick="PickFileAsync">Choose File</button>
+
+<div class="mb-3 mt-3">
+    <label for="lang" class="form-label">Language:</label>
+    <select id="lang" class="form-select" @bind="selectedLanguage">
+        @foreach (var lang in Enum.GetValues<WormsLanguage>())
+        {
+            <option value="@lang">@lang</option>
+        }
+    </select>
+</div>
+
+<button class="btn btn-primary" @onclick="ExecutePatchAsync" disabled="@string.IsNullOrWhiteSpace(selectedFilePath)">
+    Patch
+</button>
+
+@if (!string.IsNullOrEmpty(patchResult))
+{
+    <div class="alert alert-info mt-3">@patchResult</div>
+}
+
+@code {
+    private string? selectedFilePath;
+    private string? patchResult;
+    private WormsLanguage selectedLanguage = Enum.GetValues<WormsLanguage>().First();
+
+    WormsUMHHelper umhHelper = new WormsUMHHelper();
+
+    protected override Task OnInitializedAsync()
+    {
+        selectedFilePath = umhHelper.TryFindWormsPath();
+        return base.OnInitializedAsync();
+    }
+
+    private async Task PickFileAsync()
+    {
+        var result = await FilePicker.Default.PickAsync();
+        if (result != null)
+        {
+            selectedFilePath = result.FullPath;
+        }
+    }
+
+    private Task ExecutePatchAsync()
+    {
+        if (string.IsNullOrWhiteSpace(selectedFilePath))
+        {
+            patchResult = "Please select a file.";
+            return Task.CompletedTask;
+        }
+
+        try
+        {
+            var (success, message) = umhHelper.ExecutePatch(selectedFilePath, selectedLanguage);
+            patchResult = message;
+        }
+        catch (Exception ex)
+        {
+            patchResult = $"Error: {ex.Message}";
+        }
+        StateHasChanged();
+        return Task.CompletedTask;
+    }
+}

@@ -1,0 +1,61 @@
+﻿<div class="side-panel-container">
+    @if (ShowOverlay && IsPanelVisible)
+    {
+        <div class="side-panel-overlay" @onclick="OnOverlayClick"></div>
+    }
+    <div class="side-panel @(IsPanelVisible ? "visible" : "")">
+        <div class="side-panel-header">
+            <span>@Title</span>
+            @if (ShowCloseButton)
+            {
+                <button class="btn-close" @onclick="OnCloseClick"></button>
+            }
+        </div>
+        <div class="side-panel-body">
+            @if (ChildContent != null)
+            {
+                @ChildContent
+            }
+            else
+            {
+                <p>Тут можна розмістити інструкцію, підказки, статистику, або будь-яку іншу інформацію для користувача.</p>
+            }
+        </div>
+    </div>
+</div>
+
+@code {
+    [Parameter]
+    public RenderFragment? ChildContent { get; set; }
+
+    [Parameter]
+    public bool ShowOverlay { get; set; } = false;
+
+    [Parameter]
+    public bool ShowCloseButton { get; set; } = true;
+
+    [Parameter]
+    public string Title { get; set; } = "Довідка / Інфо";
+
+    [Parameter]
+    public bool IsPanelVisible { get; set; }
+
+    [Parameter]
+    public EventCallback<bool> IsPanelVisibleChanged { get; set; }
+
+    private async Task OnCloseClick()
+    {
+        if (IsPanelVisibleChanged.HasDelegate)
+        {
+            await IsPanelVisibleChanged.InvokeAsync(false);
+        }
+    }
+
+    private async Task OnOverlayClick()
+    {
+        if (IsPanelVisibleChanged.HasDelegate)
+        {
+            await IsPanelVisibleChanged.InvokeAsync(false);
+        }
+    }
+}

@@ -1,0 +1,111 @@
+﻿@using AveTranslatorM.Components.Ave
+@inherits LayoutComponentBase
+@inject WorkingService WorkingService;
+@inject IJSRuntime JS
+
+<div class="page" @oncontextmenu:preventDefault @oncontextmenu="OnContextMenu" @onclick="HideContextMenu">
+    <div class="sidebar">
+        <NavMenu />
+    </div>
+
+    <main>
+        <div class="top-row px-4">
+            <GameSelector />
+            <a href="https://learn.microsoft.com/aspnet/core/" target="_blank">About</a>
+        </div>
+
+        <article class="content px-4">
+            @Body
+        </article>
+    </main>
+
+    <ContextMenu @ref="_contextMenu">
+        <div class="context-menu-item" @onclick="OnCut">
+            <span>✂️</span> Вирізати
+        </div>
+        <div class="context-menu-item" @onclick="OnCopy">
+            <span>📋</span> Копіювати
+        </div>
+        <div class="context-menu-item" @onclick="OnPaste">
+            <span>📋</span> Вставити
+        </div>
+        <div class="context-menu-separator"></div>
+        <div class="context-menu-item" @onclick="OnSelectAll">
+            <span>📑</span> Виділити все
+        </div>
+    </ContextMenu>
+</div>
+
+@code {
+    private ContextMenu? _contextMenu;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await WorkingService.ReadWorkingFile();
+    }
+
+    private Task OnContextMenu(MouseEventArgs e)
+    {
+        _contextMenu?.Show(e.ClientX, e.ClientY);
+        StateHasChanged();
+        return Task.CompletedTask;
+    }
+
+    private void HideContextMenu()
+    {
+        _contextMenu?.Hide();
+        StateHasChanged();
+    }
+
+    private async Task OnCut()
+    {
+        if (_contextMenu != null)
+        {
+            var result = await JS.InvokeAsync<bool>(
+                "clipboardInterop.cutToClipboard",
+                _contextMenu.X,
+                _contextMenu.Y
+            );
+        }
+        HideContextMenu();
+    }
+
+    private async Task OnCopy()
+    {
+        var result = await JS.InvokeAsync<bool>("clipboardInterop.copyToClipboard");
+        HideContextMenu();
+    }
+
+    private async Task OnPaste()
+    {
+        try
+        {
+            if (_contextMenu != null)
+            {
+                var result = await JS.InvokeAsync<bool>(
+                    "clipboardInterop.pasteFromClipboard",
+                    _contextMenu.X,
+                    _contextMenu.Y
+                );
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Paste error: {ex.Message}");
+        }
+        HideContextMenu();
+    }
+
+    private async Task OnSelectAll()
+    {
+        if (_contextMenu != null)
+        {
+            var result = await JS.InvokeAsync<bool>(
+                "clipboardInterop.selectAll",
+                _contextMenu.X,
+                _contextMenu.Y
+            );
+        }
+        HideContextMenu();
+    }
+}

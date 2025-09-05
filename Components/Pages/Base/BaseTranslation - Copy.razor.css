@@ -1,0 +1,124 @@
+﻿/* BaseTranslation.razor.css */
+.input-group-text {
+    background: #f8f9fa;
+    font-size: 1.2em;
+}
+
+.card-header {
+    background: #e9ecef;
+    font-weight: 500;
+}
+
+::deep th, ::deep td {
+    max-width: 400px;
+}
+
+.working-dir-box {
+    background: #f8f9fa;
+    border-radius: 4px;
+    padding: 4px 8px;
+    font-size: 0.95em;
+    max-width: 350px;
+    max-height: 3.6em;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    white-space: pre-line;
+    word-break: break-all;
+}
+
+.working-files-list {
+    list-style: none;
+    padding-left: 0;
+    margin-bottom: 0;
+    max-height: 180px;
+    overflow-y: auto;
+}
+
+.working-file-item {
+    margin-bottom: 2px;
+    border-radius: 4px;
+    transition: background 0.15s;
+}
+
+    .working-file-item .btn {
+        color: #333;
+        text-decoration: none;
+        padding: 6px 8px;
+        border-radius: 4px;
+        width: 100%;
+        display: flex;
+        align-items: center;
+    }
+
+        .working-file-item.active,
+        .working-file-item .btn:focus,
+        .working-file-item .btn:hover {
+            box-shadow: none;
+            background: #e9ecef;
+        }
+
+            .working-file-item.active .btn {
+                font-weight: 600;
+                color: #0d6efd;
+            }
+.working-files-group {
+    margin-bottom: 0.5rem; /* Зменшив відступ між групами */
+}
+
+    .working-files-group .group-header {
+        font-weight: 500;
+        color: #666;
+        padding: 0.25rem 0;
+        margin-bottom: 0.25rem;
+    }
+
+    .working-files-group .group-files {
+        list-style: none;
+        padding-left: 1.5rem;
+        margin: 0;
+    }
+.file-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    display: inline-block;
+    max-width: 85%;
+    vertical-align: middle;
+}
+
+.alert-dismissible .btn-close {
+    padding: 0.5rem 0.75rem;
+    font-size: 1.1em;
+}
+
+.gap-2 {
+    gap: 0.5rem;
+}
+.fab-save-btn {
+    position: fixed;
+    right: 300px;
+    top: 12px;
+    z-index: 2;
+    border-radius: 50%;
+    width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.18);
+    font-size: 1.5em;
+}
+
+/* Стилі для файлів в кореневій директорії */
+.working-files-group.root-files {
+    margin-top: 0.5rem; /* Додатковий відступ зверху для кореневих файлів */
+    padding-top: 0.5rem;
+    border-top: 1px solid #eee; /* Візуальне розділення від груп */
+}
+
+.working-files-group.root-files .group-files {
+    padding-left: 0; /* Прибираємо відступ зліва для кореневих файлів */
+}
